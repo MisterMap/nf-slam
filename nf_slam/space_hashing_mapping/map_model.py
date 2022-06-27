@@ -17,7 +17,7 @@ class MapModel:
 
 
 @dataclass(unsafe_hash=True)
-class ModelConfig(object):
+class MapModelConfig(object):
     minimal_depth: float
     maximal_depth: float
     bins_count: int

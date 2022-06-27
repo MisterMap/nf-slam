@@ -1,16 +1,19 @@
 import dataclasses
 import functools
+import time
 from typing import List
 
 import jax
 import jax.numpy as jnp
 import jax_dataclasses as jdc
+import numpy as np
 import tqdm
+from flax.optim import OptimizerState
 from flax.optim.adam import Adam
 
 from nf_slam.laser_data import LaserData
 from nf_slam.space_hashing_mapping.jax_math import calculate_densities
-from nf_slam.space_hashing_mapping.map_model import MapModel, ModelConfig, init_map_model
+from nf_slam.space_hashing_mapping.map_model import MapModel, MapModelConfig, init_map_model
 from nf_slam.space_hashing_mapping.mlp_model import MLPModel
 
 
@@ -19,11 +22,17 @@ class ScanData(object):
     depths: jnp.array
     angles: jnp.array
 
-    # noinspection PyArgumentList
     @classmethod
     def from_laser_data(cls, laser_data):
         mask = laser_data.ranges < laser_data.parameters.maximal_distance
+        # noinspection PyArgumentList
         return cls(angles=jnp.array(laser_data.angles[mask]), depths=jnp.array(laser_data.ranges[mask]))
+
+    def get_random_subset(self, point_count):
+        indices = np.arange(self.depths.shape[0])
+        indices = jnp.array(np.random.choice(indices, point_count))
+        # noinspection PyArgumentList
+        return self.__class__(angles=self.angles[indices], depths=self.depths[indices])
 
 
 @jdc.pytree_dataclass
@@ -90,7 +99,7 @@ def calculate_points(depths, scan_data: ScanData):
 
 @functools.partial(jax.jit, static_argnums=[4, 5])
 def depth_prediction_loss_function(map_model: MapModel, position: jnp.array, scan_data: ScanData,
-                                   learning_data: LearningData, config: ModelConfig, model: MLPModel):
+                                   learning_data: LearningData, config: MapModelConfig, model: MLPModel):
     depth_bins = sample_depth_bins(learning_data, config)
     depths = (depth_bins[..., 1:] + depth_bins[..., :-1]) / 2
     depth_deltas = (depth_bins[..., 1:] - depth_bins[..., :-1]) / 2
@@ -108,7 +117,7 @@ def depth_prediction_loss_function(map_model: MapModel, position: jnp.array, sca
 
 @functools.partial(jax.jit, static_argnums=[4, 5])
 def predict_depths(map_model: MapModel, position: jnp.array, scan_data: ScanData,
-                   learning_data: LearningData, config: ModelConfig, model: MLPModel):
+                   learning_data: LearningData, config: MapModelConfig, model: MLPModel):
     depth_bins = sample_depth_bins(learning_data, config)
     depths = (depth_bins[..., 1:] + depth_bins[..., :-1]) / 2
     depth_deltas = (depth_bins[..., 1:] - depth_bins[..., :-1]) / 2
@@ -138,39 +147,75 @@ class LearningConfig:
 
 
 @dataclasses.dataclass
-class ConstructMapResult:
+class BuildMapResult:
     loss_history: List[float]
     map_model: MapModel
 
 
-# noinspection PyArgumentList
-def construct_map_from_one_scan(config: ModelConfig, learning_config: LearningConfig, laser_data: LaserData,
-                                model: MLPModel, map_position):
-    loss_function = depth_prediction_loss_function
-    grad_function = jax.jit(jax.grad(loss_function), static_argnums=[4, 5])
-    scan_data = ScanData.from_laser_data(laser_data)
-    map_model = init_map_model(model, config)
-    variable_optimizer = Adam(**dataclasses.asdict(learning_config.variable_optimizer_config))
-    variable_state = variable_optimizer.init_state(map_model.variables)
-    hashtable_optimizer = Adam(**dataclasses.asdict(learning_config.hashtable_optimizer_config))
-    hashtable_state = hashtable_optimizer.init_state(map_model.hashtable)
+@dataclasses.dataclass
+class BuildMapState:
+    iteration: int
+    variable_state: OptimizerState
+    hashtable_state: OptimizerState
 
-    loss_history = []
-    for i in tqdm.tqdm(range(learning_config.iterations)):
+
+class MapBuilder:
+    def __init__(self, learning_config: LearningConfig, map_model_config: MapModelConfig, mlp_model: MLPModel):
+        self.state = None
+        self.grad_function = None
+        self._variable_optimizer = Adam(**dataclasses.asdict(learning_config.variable_optimizer_config))
+        self._hashtable_optimizer = Adam(**dataclasses.asdict(learning_config.hashtable_optimizer_config))
+        self._learning_config = learning_config
+        self._map_model_config = map_model_config
+        self._mlp_model = mlp_model
+
+    def setup(self, scan_data: ScanData, map_model: MapModel, position: jnp.array):
+        start_time = time.time()
+        # noinspection PyArgumentList
         learning_data = LearningData(uniform=jax.random.uniform(
-            jax.random.PRNGKey(i),
-            (len(scan_data.depths), config.bins_count)))
-        grad = grad_function(map_model, map_position, scan_data, learning_data, config, model)
-        loss = loss_function(map_model, map_position, scan_data, learning_data, config, model)
-        loss_history.append(loss)
-        variables, variable_state = hashtable_optimizer.apply_gradient(
-            hashtable_optimizer.hyper_params,
+            jax.random.PRNGKey(0),
+            (len(scan_data.depths), self._map_model_config.bins_count)))
+        grad_function = jax.jit(jax.value_and_grad(depth_prediction_loss_function), static_argnums=[4, 5])
+
+        # noinspection PyUnresolvedReferences
+        self.grad_function = grad_function.lower(map_model, position, scan_data, learning_data, self._map_model_config,
+                                                 self._mlp_model).compile()
+        time_delta = time.time() - start_time
+        print(f"Compilation take {time_delta} s")
+
+        self.state = BuildMapState(
+            iteration=0,
+            variable_state=self._variable_optimizer.init_state(map_model.variables),
+            hashtable_state=self._hashtable_optimizer.init_state(map_model.hashtable)
+        )
+
+    def step(self, result: BuildMapResult, position: jnp.array, scan_data: ScanData):
+        map_model = result.map_model
+        # noinspection PyArgumentList
+        learning_data = LearningData(uniform=jax.random.uniform(
+            jax.random.PRNGKey(self.state.iteration),
+            (len(scan_data.depths), self._map_model_config.bins_count)))
+        loss, grad = self.grad_function(map_model, position, scan_data, learning_data)
+        loss_history = result.loss_history + [loss]
+        variables, variable_state = self._variable_optimizer.apply_gradient(
+            self._variable_optimizer.hyper_params,
             map_model.variables,
-            variable_state, grad.variables)
-        hashtable, hashtable_state = hashtable_optimizer.apply_gradient(
-            hashtable_optimizer.hyper_params,
+            self.state.variable_state, grad.variables)
+        hashtable, hashtable_state = self._hashtable_optimizer.apply_gradient(
+            self._hashtable_optimizer.hyper_params,
             map_model.hashtable,
-            hashtable_state, grad.hashtable)
+            self.state.hashtable_state, grad.hashtable)
         map_model = MapModel(hashtable=hashtable, variables=variables, resolutions=map_model.resolutions,
                              origins=map_model.origins, rotations=map_model.rotations)
-    return ConstructMapResult(loss_history, map_model)
+        self.state = BuildMapState(self.state.iteration + 1, variable_state, hashtable_state)
+        return BuildMapResult(loss_history, map_model)
+
+    # noinspection PyUnresolvedReferences
+    def build_map(self, laser_data: LaserData, position: jnp.array):
+        scan_data = ScanData.from_laser_data(laser_data)
+        map_model = init_map_model(self._mlp_model, self._map_model_config)
+        result = BuildMapResult([], map_model)
+        self.setup(scan_data, map_model, position)
+        for i in tqdm.tqdm(range(self._learning_config.iterations)):
+            result = self.step(result, position, scan_data)
+        return result

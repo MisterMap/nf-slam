@@ -87,14 +87,16 @@ def transform_points(points, position):
     angle = position[..., 2, None]
     transformed_x = x + points[..., 0] * jnp.cos(angle) - points[..., 1] * jnp.sin(angle)
     transformed_y = y + points[..., 0] * jnp.sin(angle) + points[..., 1] * jnp.cos(angle)
-    return jnp.stack([transformed_x, transformed_y], axis=-1)
+    transformed_angle = points[..., 2] + angle
+    return jnp.stack([transformed_x, transformed_y, transformed_angle], axis=-1)
 
 
 @jax.jit
 def calculate_points(depths, scan_data: ScanData):
     x = depths * jnp.cos(scan_data.angles[..., None])
     y = depths * jnp.sin(scan_data.angles[..., None])
-    return jnp.stack([x, y], axis=-1)
+    angles = jnp.ones(depths.shape) * scan_data.angles[..., None]
+    return jnp.stack([x, y, angles], axis=-1)
 
 
 @functools.partial(jax.jit, static_argnums=[4, 5])
@@ -104,7 +106,7 @@ def depth_prediction_loss_function(map_model: MapModel, position: jnp.array, sca
     depths = (depth_bins[..., 1:] + depth_bins[..., :-1]) / 2
     depth_deltas = (depth_bins[..., 1:] - depth_bins[..., :-1]) / 2
     points = calculate_points(depths, scan_data)
-    points = transform_points(points, position).reshape(-1, 2)
+    points = transform_points(points, position).reshape(-1, 3)
     densities = config.density_scale * calculate_densities(points, map_model, model, config.L).reshape(
         depths.shape[:2])
     weights = jax.vmap(calculate_weights)(densities, depth_deltas)
@@ -122,12 +124,29 @@ def predict_depths(map_model: MapModel, position: jnp.array, scan_data: ScanData
     depths = (depth_bins[..., 1:] + depth_bins[..., :-1]) / 2
     depth_deltas = (depth_bins[..., 1:] - depth_bins[..., :-1]) / 2
     points = calculate_points(depths, scan_data)
-    points = transform_points(points, position).reshape(-1, 2)
+    points = transform_points(points, position).reshape(-1, 3)
     densities = config.density_scale * calculate_densities(points, map_model, model, config.L).reshape(
         depths.shape[:2])
     weights = jax.vmap(calculate_weights)(densities, depth_deltas)
     extended_depths = jnp.concatenate([depths, jnp.full([depths.shape[0], 1], config.maximal_depth)], axis=-1)
     return jnp.sum(weights * extended_depths, axis=-1)
+
+
+@functools.partial(jax.jit, static_argnums=[4, 5])
+def predict_depths_and_variances(map_model: MapModel, position: jnp.array, scan_data: ScanData,
+                                 learning_data: LearningData, config: MapModelConfig, model: MLPModel):
+    depth_bins = sample_depth_bins(learning_data, config)
+    depths = (depth_bins[..., 1:] + depth_bins[..., :-1]) / 2
+    depth_deltas = (depth_bins[..., 1:] - depth_bins[..., :-1]) / 2
+    points = calculate_points(depths, scan_data)
+    points = transform_points(points, position).reshape(-1, 3)
+    densities = config.density_scale * calculate_densities(points, map_model, model, config.L).reshape(
+        depths.shape[:2])
+    weights = jax.vmap(calculate_weights)(densities, depth_deltas)
+    extended_depths = jnp.concatenate([depths, jnp.full([depths.shape[0], 1], config.maximal_depth)], axis=-1)
+    predicted_depths = jnp.sum(weights * extended_depths, axis=-1)
+    predicted_variance = jnp.sum(weights * (extended_depths - predicted_depths[..., None]) ** 2, axis=-1)
+    return predicted_depths, predicted_variance
 
 
 @dataclasses.dataclass

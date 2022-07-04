@@ -20,16 +20,16 @@ def show_points(laser_data_list, c="yellow", s=0.3):
     return points
 
 
-def plot_model_heatmap(map_model: MapModel, bounds, model):
-    grid_shape = (200, 200)
+def plot_model_heatmap(map_model: MapModel, bounds, model, grid_shape=(200, 200), angle=0, vmin=None, vmax=None):
     grid_x, grid_y = jnp.meshgrid(jnp.linspace(bounds[0], bounds[1], grid_shape[0]),
                                   jnp.linspace(bounds[2], bounds[3], grid_shape[1]))
-    grid = jnp.stack([grid_x, grid_y], axis=2).reshape(-1, 2)
+    grid_angle = jnp.ones_like(grid_x) * angle
+    grid = jnp.stack([grid_x, grid_y, grid_angle], axis=2).reshape(-1, 3)
     obstacle_probabilities = calculate_densities(grid, map_model, model, map_model.hashtable.shape[0])
     obstacle_probabilities = np.array(obstacle_probabilities).reshape(*grid_shape)
-    grid = grid.reshape(grid_shape[0], grid_shape[1], 2)
+    grid = grid.reshape(grid_shape[0], grid_shape[1], 3)
     plt.gca().pcolormesh(grid[:, :, 0], grid[:, :, 1], obstacle_probabilities, cmap='RdBu', shading='auto',
-                         vmin=None, vmax=None)
+                         vmin=vmin, vmax=vmax)
     plt.gca().set_aspect('equal')
 
 
@@ -61,8 +61,9 @@ def plot_optimization_result(laser_data: LaserData, model_config: MapModelConfig
     # new_points = laser_data.odometry_position.apply(new_points)
     new_points = Position2D.from_vec(np.array(optimized_position)).apply(new_points)
 
-    ground_truth_points = np.stack([np.cos(scan_data.angles) * scan_data.depths, np.sin(scan_data.angles) * scan_data.depths],
-                          axis=1)
+    ground_truth_points = np.stack(
+        [np.cos(scan_data.angles) * scan_data.depths, np.sin(scan_data.angles) * scan_data.depths],
+        axis=1)
     ground_truth_points = Position2D.from_vec(np.array(optimized_position)).apply(ground_truth_points)
     # new_points = laser_data.odometr
     show_points([laser_data], s=3, c="orange")
@@ -71,3 +72,14 @@ def plot_optimization_result(laser_data: LaserData, model_config: MapModelConfig
     plot_positions(position_history)
     plot_position(laser_data.odometry_position.as_vec())
     plt.gca().set_aspect('equal')
+
+
+def plot_reconstructed_result(laser_data, model_config, mlp_model, map_model, s=3, c="blue"):
+    scan_data = ScanData.from_laser_data(laser_data)
+    position = jnp.array(laser_data.odometry_position.as_vec())
+    learning_data = LearningData(uniform=jnp.ones((len(scan_data.depths), model_config.bins_count)) * 0.5)
+    predicted_depths = predict_depths(map_model, position, scan_data, learning_data, model_config, mlp_model)
+    points = np.stack([np.cos(scan_data.angles) * predicted_depths, np.sin(scan_data.angles) * predicted_depths],
+                      axis=1)
+    points = laser_data.odometry_position.apply(points)
+    plt.scatter(points[:, 0], points[:, 1], s=s, c=c)

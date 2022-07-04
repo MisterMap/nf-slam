@@ -10,7 +10,7 @@ import tqdm
 from nf_slam.laser_data import LaserData
 from nf_slam.position_2d import Position2D
 from nf_slam.space_hashing_mapping.map_model import MapModel, MapModelConfig
-from nf_slam.space_hashing_mapping.mapping import predict_depths, ScanData, LearningData
+from nf_slam.space_hashing_mapping.mapping import predict_depths, ScanData, LearningData, predict_depths_and_variances
 from nf_slam.space_hashing_mapping.mlp_model import MLPModel
 
 
@@ -62,7 +62,9 @@ class OptimizePositionData:
 
 
 def calculate_depth_deltas(map_model, position, scan_data, learning_data, config, model):
-    return huber(predict_depths(map_model, position, scan_data, learning_data, config, model) - scan_data.depths, 0.12)
+    depths, variances = predict_depths_and_variances(map_model, position, scan_data, learning_data, config, model)
+    deltas = (depths - scan_data.depths) / jax.lax.stop_gradient(variances + 1e-1) ** 0.5
+    return huber(deltas, 0.3)
 
 
 class PositionOptimizer:
@@ -85,7 +87,7 @@ class PositionOptimizer:
         jacobian = self.jacobian_function(map_model, result.optimized_position, scan_data,
                                           learning_data,
                                           self._map_model_config, self._model)
-        jacobian_norm = jnp.linalg.norm(jacobian, axis=1)
+        jacobian_norm = jnp.linalg.norm(jacobian, axis=1) + 1e-4
         clipped_norm = jnp.clip(jacobian_norm, 0, self._config.maximal_clip_norm)
         jacobian = jacobian / jacobian_norm[:, None] * clipped_norm[:, None]
         depth_deltas = calculate_depth_deltas(map_model, result.optimized_position, scan_data,

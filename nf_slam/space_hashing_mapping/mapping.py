@@ -1,7 +1,6 @@
 import dataclasses
 import functools
 import time
-from typing import List
 
 import jax
 import jax.numpy as jnp
@@ -166,12 +165,6 @@ class LearningConfig:
 
 
 @dataclasses.dataclass
-class BuildMapResult:
-    loss_history: List[float]
-    map_model: MapModel
-
-
-@dataclasses.dataclass
 class BuildMapState:
     iteration: int
     variable_state: OptimizerState
@@ -187,6 +180,7 @@ class MapBuilder:
         self._learning_config = learning_config
         self._map_model_config = map_model_config
         self._mlp_model = mlp_model
+        self.loss_history = []
 
     def setup(self, scan_data: ScanData, map_model: MapModel, position: jnp.array):
         start_time = time.time()
@@ -208,14 +202,12 @@ class MapBuilder:
             hashtable_state=self._hashtable_optimizer.init_state(map_model.hashtable)
         )
 
-    def step(self, result: BuildMapResult, position: jnp.array, scan_data: ScanData):
-        map_model = result.map_model
+    def step(self, map_model: MapModel, position: jnp.array, scan_data: ScanData):
         # noinspection PyArgumentList
         learning_data = LearningData(uniform=jax.random.uniform(
             jax.random.PRNGKey(self.state.iteration),
             (len(scan_data.depths), self._map_model_config.bins_count)))
         loss, grad = self.grad_function(map_model, position, scan_data, learning_data)
-        loss_history = result.loss_history + [loss]
         variables, variable_state = self._variable_optimizer.apply_gradient(
             self._variable_optimizer.hyper_params,
             map_model.variables,
@@ -227,14 +219,14 @@ class MapBuilder:
         map_model = MapModel(hashtable=hashtable, variables=variables, resolutions=map_model.resolutions,
                              origins=map_model.origins, rotations=map_model.rotations)
         self.state = BuildMapState(self.state.iteration + 1, variable_state, hashtable_state)
-        return BuildMapResult(loss_history, map_model)
+        self.loss_history.append(loss)
+        return map_model
 
     # noinspection PyUnresolvedReferences
     def build_map(self, laser_data: LaserData, position: jnp.array):
         scan_data = ScanData.from_laser_data(laser_data)
         map_model = init_map_model(self._mlp_model, self._map_model_config)
-        result = BuildMapResult([], map_model)
         self.setup(scan_data, map_model, position)
         for i in tqdm.tqdm(range(self._learning_config.iterations)):
-            result = self.step(result, position, scan_data)
-        return result
+            map_model = self.step(map_model, position, scan_data)
+        return map_model

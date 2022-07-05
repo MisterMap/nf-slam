@@ -58,14 +58,12 @@ def plot_optimization_result(laser_data: LaserData, model_config: MapModelConfig
     predicted_depths = predict_depths(map_model, optimized_position, scan_data, learning_data, model_config, model)
     new_points = np.stack([np.cos(scan_data.angles) * predicted_depths, np.sin(scan_data.angles) * predicted_depths],
                           axis=1)
-    # new_points = laser_data.odometry_position.apply(new_points)
     new_points = Position2D.from_vec(np.array(optimized_position)).apply(new_points)
 
     ground_truth_points = np.stack(
         [np.cos(scan_data.angles) * scan_data.depths, np.sin(scan_data.angles) * scan_data.depths],
         axis=1)
     ground_truth_points = Position2D.from_vec(np.array(optimized_position)).apply(ground_truth_points)
-    # new_points = laser_data.odometr
     show_points([laser_data], s=3, c="orange")
     plt.scatter(new_points[:, 0], new_points[:, 1], s=3)
     plt.scatter(ground_truth_points[:, 0], ground_truth_points[:, 1], s=3)
@@ -74,12 +72,14 @@ def plot_optimization_result(laser_data: LaserData, model_config: MapModelConfig
     plt.gca().set_aspect('equal')
 
 
-def plot_reconstructed_result(laser_data, model_config, mlp_model, map_model, s=3, c="blue"):
+def plot_reconstructed_result(laser_data, model_config, mlp_model, map_model, s=3, c="blue", position=None):
     scan_data = ScanData.from_laser_data(laser_data)
-    position = jnp.array(laser_data.odometry_position.as_vec())
+    if position is None:
+        position = laser_data.odometry_position
     learning_data = LearningData(uniform=jnp.ones((len(scan_data.depths), model_config.bins_count)) * 0.5)
-    predicted_depths = predict_depths(map_model, position, scan_data, learning_data, model_config, mlp_model)
+    predicted_depths = predict_depths(map_model, jnp.array(position.as_vec()),
+                                      scan_data, learning_data, model_config, mlp_model)
     points = np.stack([np.cos(scan_data.angles) * predicted_depths, np.sin(scan_data.angles) * predicted_depths],
                       axis=1)
-    points = laser_data.odometry_position.apply(points)
+    points = position.apply(points)
     plt.scatter(points[:, 0], points[:, 1], s=s, c=c)

@@ -28,21 +28,27 @@ def test_init_model(mlp_model, mlp_model_init_batch):
     variables = mlp_model.init(jax.random.PRNGKey(1), jax.block_until_ready(mlp_model_init_batch))
 
 
-def test_map_builder_step(map_builder: MapBuilder, build_map_result, init_position, scan_data, map_model):
+def test_map_builder_step(map_builder: MapBuilder, map_model, init_position, scan_data):
     map_builder.setup(scan_data, map_model, init_position)
-    result = map_builder.step(build_map_result, init_position, scan_data)
+    result = map_builder.step(map_model, init_position, scan_data)
 
 
 def test_map_builder_build_map(map_builder, laser_data, init_position):
     map_builder.build_map(laser_data, init_position)
 
 
-def test_position_optimizer_step(position_optimizer, optimize_position_result, map_model, scan_data):
+def test_position_optimizer_step(position_optimizer, init_position, map_model, scan_data):
     position_optimizer.setup()
-    position_optimizer.step(optimize_position_result, map_model, scan_data)
+    position_optimizer.step(init_position, map_model, scan_data)
 
 
 def test_position_optimizer_optimize_position(position_optimizer, laser_data, map_model, init_position):
     result = position_optimizer.find_position(laser_data, map_model, init_position)
-    assert len(result.position_history) == 101
-    assert type(result.position_history[0]) == Position2D
+    assert len(position_optimizer.position_history) == 100
+    assert type(position_optimizer.position_history[0]) == Position2D
+
+
+def test_batch_position_optimizer_config(batch_position_optimizer: BatchPositionOptimizer, batch_init_position,
+                                         map_model, scan_data_batch):
+    batch_position_optimizer.setup()
+    result = batch_position_optimizer.step(batch_init_position, map_model, scan_data_batch)

@@ -29,6 +29,7 @@ class MapModelConfig(object):
     max_log_resolution: float
     min_log_resolution: float
     depth_delta: float = field(init=False)
+    huber_delta: float
 
     def __post_init__(self):
         self.depth_delta = (self.maximal_depth - self.minimal_depth) / self.bins_count

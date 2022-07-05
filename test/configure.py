@@ -3,9 +3,10 @@ import pytest
 
 from nf_slam.lidar_dataset_loader import LidarDatasetLoaderConfig, LidarDatasetLoader
 from nf_slam.space_hashing_mapping.map_model import MapModelConfig, init_map_model
-from nf_slam.space_hashing_mapping.mapping import MapBuilder, LearningConfig, OptimizerConfig, BuildMapResult, ScanData
+from nf_slam.space_hashing_mapping.mapping import MapBuilder, LearningConfig, OptimizerConfig, ScanData
 from nf_slam.space_hashing_mapping.mlp_model import MLPModel
-from nf_slam.tracking.tracking import OptimizePositionConfig, PositionOptimizer, OptimizePositionResult
+from nf_slam.tracking.batch_tracking import BatchPositionOptimizerConfig, BatchPositionOptimizer, ScanDataBatch
+from nf_slam.tracking.tracking import OptimizePositionConfig, PositionOptimizer
 
 
 @pytest.fixture
@@ -119,15 +120,33 @@ def position_optimizer(position_optimization_config, map_model_config, mlp_model
 
 
 @pytest.fixture
-def build_map_result(map_model):
-    return BuildMapResult([], map_model)
-
-
-@pytest.fixture
 def scan_data(laser_data):
     return ScanData.from_laser_data(laser_data)
 
 
 @pytest.fixture
-def optimize_position_result(init_position):
-    return OptimizePositionResult([], [], init_position)
+def batch_position_optimization_config():
+    return BatchPositionOptimizerConfig(
+        iterations=100,
+        init_hessian=jnp.diag(jnp.array([2000, 2000, 200])),
+        maximal_clip_norm=30,
+        beta1=0.7,
+        beta2=0.4,
+        hessian_adder=jnp.diag(jnp.array([20, 20, 2])),
+        batch_size=5,
+    )
+
+
+@pytest.fixture
+def batch_position_optimizer(batch_position_optimization_config, map_model_config, mlp_model):
+    return BatchPositionOptimizer(batch_position_optimization_config, map_model_config, mlp_model)
+
+
+@pytest.fixture
+def scan_data_batch(laser_data_list):
+    return ScanDataBatch.from_data_list(laser_data_list[:5], 100)
+
+
+@pytest.fixture
+def batch_init_position(laser_data_list):
+    return jnp.array([x.odometry_position.as_vec() for x in laser_data_list[:5]]).reshape(-1)

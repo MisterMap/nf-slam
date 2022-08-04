@@ -86,6 +86,7 @@ class BatchPositionOptimizer:
         jacobian_norm = jnp.linalg.norm(jacobian, axis=1) + 1e-4
         clipped_norm = jnp.clip(jacobian_norm, 0, self._config.maximal_clip_norm)
         jacobian = jacobian / jacobian_norm[:, None] * clipped_norm[:, None]
+        # jacobian = jnp.clip(jacobian, -self._config.maximal_clip_norm, self._config.maximal_clip_norm)
         depth_deltas = batched_calculate_depth_deltas(map_model,
                                                       optimized_positions,
                                                       scan_data_batch.scan_data,
@@ -94,12 +95,16 @@ class BatchPositionOptimizer:
                                                       self._model,
                                                       scan_data_batch.indices)
         grad = 2 * jnp.sum(jacobian * depth_deltas[:, None], axis=0)
-        hessian = 2 * jacobian.T @ jacobian + self._hessian_adder
+        hessian = 2 * jacobian.T @ jacobian
         grad = self._config.beta2 * self.state.previous_grad + (1 - self._config.beta2) * grad
         hessian = self._config.beta1 * self.state.previous_hessian + (1 - self._config.beta1) * hessian
-        self.state = OptimizePositionState(self.state.iteration + 1, hessian, grad)
-        delta = -(jnp.linalg.inv(hessian) @ grad)
+        previous_hessian = hessian
+        hessian = hessian + self._hessian_adder
+        delta = -(jnp.linalg.inv(hessian) @ grad) * self._config.learning_rate
         optimized_positions = optimized_positions + delta
+        previous_grad = grad + hessian @ delta
+        # previous_grad = grad
+        self.state = OptimizePositionState(self.state.iteration + 1, previous_hessian, previous_grad)
         loss = batch_loss_function(map_model, optimized_positions, scan_data_batch.scan_data,
                                    learning_data,
                                    self._map_model_config, self._model, scan_data_batch.indices)

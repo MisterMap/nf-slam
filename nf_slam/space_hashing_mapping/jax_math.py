@@ -55,7 +55,8 @@ def calculate_densities(points: jnp.array, map_model: MapModel, model: MLPModel,
                                            map_model.rotations)
     embedding = jnp.transpose(embedding, (1, 0, 2)).reshape(embedding.shape[1], -1)
     freq = 2 ** jnp.arange(0, 10)
-    sin_angle = jnp.sin(freq[None, :] * points[..., 2, None])
-    cos_angle = jnp.cos(freq[None, :] * points[..., 2, None])
-    embedding = jnp.concatenate([embedding, sin_angle, cos_angle], axis=1)
+    # sin_angle = jnp.sin(freq[None, :] * points[..., 2, None]) * 0
+    # cos_angle = jnp.cos(freq[None, :] * points[..., 2, None]) * 0
+    # embedding = jnp.concatenate([embedding, sin_angle, cos_angle], axis=1)
+    embedding = jnp.concatenate([embedding], axis=1)
     return jax.nn.softplus(model.apply(map_model.variables, embedding))

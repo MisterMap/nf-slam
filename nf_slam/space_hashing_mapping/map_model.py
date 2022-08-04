@@ -41,7 +41,7 @@ def init_map_model(model, config):
     resolutions = 2 ** jnp.linspace(config.min_log_resolution, config.max_log_resolution, config.L)
     origins = jnp.zeros(2) + jax.random.normal(jax.random.PRNGKey(2), (config.L, 2))
     rotations = jax.random.uniform(jax.random.PRNGKey(10), (config.L,)) * 2 * np.pi
-    batch = jnp.ones([10, config.F * config.L + 20])
+    batch = jnp.ones([10, config.F * config.L])
     variables = model.init(jax.random.PRNGKey(1), batch)
     return MapModel(hashtable=hashtable, variables=variables, resolutions=resolutions,
                     origins=origins, rotations=rotations)

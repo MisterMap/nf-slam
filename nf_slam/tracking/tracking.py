@@ -16,8 +16,10 @@ from nf_slam.space_hashing_mapping.mlp_model import MLPModel
 
 @functools.partial(jax.jit, static_argnums=[1, ])
 def huber(input_array, delta):
-    mask = jnp.abs(input_array) < delta
-    result = jnp.where(mask, input_array, jnp.sign(input_array) * (delta * (2 * jnp.abs(input_array) - delta)) ** 0.5)
+    # mask = jnp.abs(input_array) < delta
+    # result = jnp.where(mask, input_array, jnp.sign(input_array) * (delta * (2 * jnp.abs(input_array) - delta)) ** 0.5)
+    result = delta ** 2 * (jnp.sqrt((1 + (input_array / delta) ** 2)) - 1)
+    result = jnp.sign(input_array) * jnp.sqrt(result)
     return result
 
 
@@ -25,7 +27,7 @@ def huber(input_array, delta):
 def loss_function_without_normalization(map_model: MapModel, position: jnp.array, scan_data: ScanData,
                                         learning_data: LearningData, config: MapModelConfig, model: MLPModel):
     predicted_depths = predict_depths(map_model, position, scan_data, learning_data, config, model)
-    return jnp.sqrt(jnp.sum((huber(scan_data.depths - predicted_depths, 2)) ** 2) / predicted_depths.shape[0])
+    return jnp.sqrt(jnp.sum((scan_data.depths - predicted_depths) ** 2) / predicted_depths.shape[0])
 
 
 @dataclasses.dataclass
@@ -57,7 +59,7 @@ class OptimizePositionData:
 
 def calculate_depth_deltas(map_model, position, scan_data, learning_data, config: MapModelConfig, model):
     depths, variances = predict_depths_and_variances(map_model, position, scan_data, learning_data, config, model)
-    scale = jax.lax.stop_gradient(variances + 1e-1) ** 0.5
+    scale = jax.lax.stop_gradient(variances + 0.1) ** 0.5
     deltas = (depths - scan_data.depths) / scale
     return huber(deltas, config.huber_delta)
 

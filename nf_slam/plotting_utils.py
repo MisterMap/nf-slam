@@ -2,12 +2,33 @@ import jax.numpy as jnp
 import numpy as np
 from matplotlib import pyplot as plt
 
+import nf_slam.cnf.mapping
 from nf_slam.laser_data import LaserData
 from nf_slam.position_2d import Position2D
 from nf_slam.space_hashing_mapping.jax_math import calculate_densities
 from nf_slam.space_hashing_mapping.map_model import MapModel, MapModelConfig
 from nf_slam.space_hashing_mapping.mapping import ScanData, LearningData, predict_depths
 from nf_slam.space_hashing_mapping.mlp_model import MLPModel
+
+
+def get_points(laser_data_list, c="yellow", s=0.3):
+    all_points = []
+    for laser_data in laser_data_list:
+        all_points.append(laser_data.as_points_in_odometry_frame())
+    points = np.concatenate(all_points, axis=0)
+    return points
+
+
+def plot_model_heatmap_cnf(map_model: MapModel, bounds, model, grid_shape=(200, 200), vmin=None, vmax=None):
+    grid_x, grid_y = jnp.meshgrid(jnp.linspace(bounds[0], bounds[1], grid_shape[0]),
+                                  jnp.linspace(bounds[2], bounds[3], grid_shape[1]))
+    grid = jnp.stack([grid_x, grid_y], axis=2).reshape(-1, 2)
+    obstacle_probabilities = nf_slam.cnf.mapping.calculate_densities(grid, map_model, model)
+    obstacle_probabilities = np.array(obstacle_probabilities).reshape(*grid_shape)
+    grid = grid.reshape(grid_shape[0], grid_shape[1], 2)
+    plt.gca().pcolormesh(grid[:, :, 0], grid[:, :, 1], obstacle_probabilities, cmap='RdBu', shading='auto',
+                         vmin=vmin, vmax=vmax)
+    plt.gca().set_aspect('equal')
 
 
 def show_points(laser_data_list, c="yellow", s=0.3):

@@ -6,11 +6,9 @@ from typing import Optional
 import jax
 import jax.numpy as jnp
 import jax_dataclasses as jdc
-import numpy as np
 import optax
 import tqdm
 from flax.optim.adam import Adam
-from matplotlib import pyplot as plt
 
 from nf_slam.laser_data import LaserData
 from nf_slam.space_hashing_mapping.jax_math import calculate_layer_embeddings
@@ -53,7 +51,7 @@ class LearningData:
 
 
 @dataclass(unsafe_hash=True)
-class MapModelConfig(object):
+class CNFMapModelConfig(object):
     minimal_depth: float
     maximal_depth: float
     F: int
@@ -64,7 +62,7 @@ class MapModelConfig(object):
 
 
 @dataclass(unsafe_hash=True)
-class MapBuildingConfig:
+class CNFMapBuildingConfig:
     sampling_depth_delta: float
     sampling_depth_count: int
     classification_loss_weight: float
@@ -98,8 +96,8 @@ def transform_points(points, position):
 
 @functools.partial(jax.jit, static_argnums=[4, 5, 6])
 def mapping_classification_loss(map_model: MapModel, position: jnp.array, scan_data: ScanData,
-                                learning_data: LearningData, map_model_config: MapModelConfig, model: MLPModel,
-                                config: MapBuildingConfig):
+                                learning_data: LearningData, map_model_config: CNFMapModelConfig, model: MLPModel,
+                                config: CNFMapBuildingConfig):
     sampling_depth_deltas = jnp.where(learning_data.normal > 0, config.sampling_depth_delta,
                                       scan_data.depths[..., None] / 2)
     sampling_depths = learning_data.normal * sampling_depth_deltas + scan_data.depths[..., None]
@@ -114,8 +112,8 @@ def mapping_classification_loss(map_model: MapModel, position: jnp.array, scan_d
 
 @functools.partial(jax.jit, static_argnums=[4, 5, 6])
 def mapping_point_loss(map_model: MapModel, position: jnp.array, scan_data: ScanData,
-                       learning_data: LearningData, map_model_config: MapModelConfig, model: MLPModel,
-                       config: MapBuildingConfig):
+                       learning_data: LearningData, map_model_config: CNFMapModelConfig, model: MLPModel,
+                       config: CNFMapBuildingConfig):
     sampling_depths = scan_data.depths[..., None]
     points = calculate_points(sampling_depths, scan_data)
     points = transform_points(points, position).reshape(-1, 2)
@@ -125,8 +123,8 @@ def mapping_point_loss(map_model: MapModel, position: jnp.array, scan_data: Scan
 
 @functools.partial(jax.jit, static_argnums=[4, 5, 6])
 def random_mapping_point_loss(map_model: MapModel, position: jnp.array, scan_data: ScanData,
-                              learning_data: LearningData, map_model_config: MapModelConfig, model: MLPModel,
-                              config: MapBuildingConfig):
+                              learning_data: LearningData, map_model_config: CNFMapModelConfig, model: MLPModel,
+                              config: CNFMapBuildingConfig):
     points = learning_data.random_points
     densities = calculate_densities(points, map_model, model)
     return (densities ** 2).mean()
@@ -134,8 +132,8 @@ def random_mapping_point_loss(map_model: MapModel, position: jnp.array, scan_dat
 
 @functools.partial(jax.jit, static_argnums=[4, 5, 6])
 def mapping_loss(map_model: MapModel, position: jnp.array, scan_data: ScanData,
-                 learning_data: LearningData, map_model_config: MapModelConfig, model: MLPModel,
-                 config: MapBuildingConfig):
+                 learning_data: LearningData, map_model_config: CNFMapModelConfig, model: MLPModel,
+                 config: CNFMapBuildingConfig):
     return config.point_loss_weight * mapping_point_loss(map_model, position, scan_data,
                                                          learning_data, map_model_config, model, config) + \
            config.classification_loss_weight * mapping_classification_loss(map_model, position, scan_data,
@@ -145,9 +143,9 @@ def mapping_loss(map_model: MapModel, position: jnp.array, scan_data: ScanData,
                                                                          learning_data, map_model_config, model, config)
 
 
-class MapBuilder:
-    def __init__(self, learning_config: LearningConfig, map_building_config: MapBuildingConfig,
-                 map_model_config: MapModelConfig, mlp_model: MLPModel):
+class CNFMapBuilder:
+    def __init__(self, learning_config: LearningConfig, map_building_config: CNFMapBuildingConfig,
+                 map_model_config: CNFMapModelConfig, mlp_model: MLPModel):
         self.state: Optional[BuildMapState] = None
         self.grad_function = None
         self._variable_optimizer = Adam(**dataclasses.asdict(learning_config.variable_optimizer_config))

@@ -6,9 +6,9 @@ import jax
 import jax.numpy as jnp
 
 from nf_slam.cnf.mapping import calculate_densities
+from nf_slam.cnf.mapping import transform_points, calculate_points
 from nf_slam.space_hashing_mapping.map_model import MapModel
 from nf_slam.space_hashing_mapping.mapping import ScanData
-from nf_slam.cnf.mapping import transform_points, calculate_points
 from nf_slam.space_hashing_mapping.mlp_model import MLPModel
 from nf_slam.tracking.batch_tracking import ScanDataBatch
 
@@ -19,7 +19,7 @@ class TrackingConfig:
 
 
 @dataclasses.dataclass
-class OptimizePositionConfig:
+class CNFPositionOptimizerConfig:
     learning_rate: float
     iterations: int  # 100
     init_hessian: jnp.array  # jnp.diag(jnp.array([2000, 2000, 200]))
@@ -56,7 +56,7 @@ def tracking_loss(map_model: MapModel, position: jnp.array, scan_data: ScanData,
 
 
 @dataclasses.dataclass
-class BatchPositionOptimizerConfig(OptimizePositionConfig):
+class CNFBatchPositionOptimizerConfig(CNFPositionOptimizerConfig):
     batch_size: int
 
 
@@ -79,8 +79,8 @@ def batch_loss_function(map_model, positions, scan_data, tracking_config, model,
     return tracking_loss(map_model, positions, scan_data, model, tracking_config)
 
 
-class BatchPositionOptimizer:
-    def __init__(self, config: BatchPositionOptimizerConfig, model: MLPModel):
+class CNFBatchPositionOptimizer:
+    def __init__(self, config: CNFBatchPositionOptimizerConfig, model: MLPModel):
         self._tracking_config = config
         self.state: Optional[OptimizePositionState] = None
         self.jacobian_function = None
@@ -130,3 +130,39 @@ class BatchPositionOptimizer:
         for i in range(self._tracking_config.batch_size):
             result = result.at[i * n: i * n + n, i * n: i * n + n].set(matrix)
         return result
+
+
+class CNFPositionOptimizer:
+    def __init__(self, config: CNFPositionOptimizerConfig, mlp_model: MLPModel):
+        self._config = config
+        self.state: Optional[OptimizePositionState] = None
+        self.jacobian_function = None
+        self.loss = None
+        self._model = mlp_model
+
+    def setup(self):
+        self.state = OptimizePositionState(iteration=0, previous_hessian=self._config.init_hessian,
+                                           previous_grad=jnp.zeros(3))
+        self.jacobian_function = jax.jit(jax.jacfwd(calculate_deltas, argnums=1), static_argnums=[4, 5])
+
+    def step(self, optimized_position: jnp.array, map_model, scan_data):
+        jacobian = self.jacobian_function(map_model, optimized_position, scan_data,
+                                          self._model, self._config.tracking_config)
+        jacobian_norm = jnp.linalg.norm(jacobian, axis=1) + 1e-4
+        clipped_norm = jnp.clip(jacobian_norm, 0, self._config.maximal_clip_norm)
+        jacobian = jacobian / jacobian_norm[:, None] * clipped_norm[:, None]
+        depth_deltas = calculate_deltas(map_model, optimized_position, scan_data,
+                                        self._model, self._config.tracking_config)
+        grad = 2 * jnp.sum(jacobian * depth_deltas[:, None], axis=0)
+        hessian = 2 * jacobian.T @ jacobian
+        grad = self._config.beta2 * self.state.previous_grad + (1 - self._config.beta2) * grad
+        hessian = self._config.beta1 * self.state.previous_hessian + (1 - self._config.beta1) * hessian
+        previous_hessian = hessian
+        hessian = hessian + self._config.hessian_adder
+        delta = -(jnp.linalg.inv(hessian) @ grad) * self._config.learning_rate
+        optimized_position = optimized_position + delta
+        previous_grad = grad + hessian @ delta
+        self.state = OptimizePositionState(self.state.iteration + 1, previous_hessian, previous_grad)
+        self.loss = tracking_loss(map_model, optimized_position, scan_data,
+                                  self._model, self._config.tracking_config)
+        return optimized_position

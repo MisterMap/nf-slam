@@ -43,7 +43,6 @@ class UniversalFactory:
                 if annotation is inspect._empty:
                     annotation = None
                 function_parameters[key] = self._make_impl(annotation, parameters[key], **kwargs)
-                print(f"[_make_from_function] Add argument {key} with value {function_arguments[key]}")
             elif key in kwargs.keys():
                 function_parameters[key] = kwargs[key]
             elif value.default is not inspect._empty:

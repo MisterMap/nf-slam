@@ -62,8 +62,14 @@ def test_cnf_odometry_step(cnf_odometry, laser_data):
     cnf_odometry.step(laser_data)
 
 
+def test_cnf_odometry_second_step(cnf_odometry, laser_data):
+    cnf_odometry.setup()
+    cnf_odometry.step(laser_data)
+    cnf_odometry.step(laser_data)
+
+
 def test_universal_factory(universal_factory, cnf_odometry_full_config_dict):
     order = ["mlp_model", "map_model_config", "map_model_config", "learning_config", "map_building_config",
-        "cnf_odometry"]
+             "cnf_odometry"]
     odometry = universal_factory.iterative_make(order, cnf_odometry_full_config_dict)
     odometry.setup()

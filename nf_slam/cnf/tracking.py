@@ -143,14 +143,14 @@ class CNFPositionOptimizer:
     def setup(self):
         self.state = OptimizePositionState(iteration=0, previous_hessian=self._config.init_hessian,
                                            previous_grad=jnp.zeros(3))
-        self.jacobian_function = jax.jit(jax.jacfwd(calculate_deltas, argnums=1), static_argnums=[4, 5])
+        self.jacobian_function = jax.jit(jax.jacfwd(calculate_deltas, argnums=1), static_argnums=[3, 4])
 
     def step(self, optimized_position: jnp.array, map_model, scan_data):
         jacobian = self.jacobian_function(map_model, optimized_position, scan_data,
                                           self._model, self._config.tracking_config)
-        jacobian_norm = jnp.linalg.norm(jacobian, axis=1) + 1e-4
-        clipped_norm = jnp.clip(jacobian_norm, 0, self._config.maximal_clip_norm)
-        jacobian = jacobian / jacobian_norm[:, None] * clipped_norm[:, None]
+        # jacobian_norm = jnp.linalg.norm(jacobian, axis=1) + 1e-4
+        # clipped_norm = jnp.clip(jacobian_norm, 0, self._config.maximal_clip_norm)
+        # jacobian = jacobian / jacobian_norm[:, None] * clipped_norm[:, None]
         depth_deltas = calculate_deltas(map_model, optimized_position, scan_data,
                                         self._model, self._config.tracking_config)
         grad = 2 * jnp.sum(jacobian * depth_deltas[:, None], axis=0)

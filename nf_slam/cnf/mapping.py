@@ -41,13 +41,15 @@ class LearningData:
     random_points: jnp.array
 
     @classmethod
-    def from_config(cls, scan_data, config, key):
+    def from_config(cls, scan_data, config, key, boundary=None):
+        if boundary is None:
+            boundary = config.random_point_boundary
         random_points = jax.random.uniform(jax.random.PRNGKey(key), (config.random_point_count, 2))
         # noinspection PyArgumentList
         return cls(
             normal=jax.random.normal(jax.random.PRNGKey(key),
                                      (len(scan_data.depths), config.sampling_depth_count)),
-            random_points=config.random_point_boundary.apply(random_points))
+            random_points=boundary.apply(random_points))
 
 
 @dataclass(unsafe_hash=True)
@@ -106,7 +108,7 @@ def mapping_classification_loss(map_model: MapModel, position: jnp.array, scan_d
     points = transform_points(points, position).reshape(-1, 2)
     labels = (jnp.sign(learning_data.normal.reshape(-1)) + 1) / 2.
     densities = calculate_densities(points, map_model, model)
-    labels = jnp.where(labels < 0.5, labels, 0.75 * jax.nn.sigmoid(densities) + 0.25)
+    # labels = jnp.where(labels < 0.5, labels, 0.75 * jax.nn.sigmoid(densities) + 0.25)
     return optax.sigmoid_binary_cross_entropy(densities, labels).mean()
 
 
@@ -139,7 +141,7 @@ def mapping_loss(map_model: MapModel, position: jnp.array, scan_data: ScanData,
            config.classification_loss_weight * mapping_classification_loss(map_model, position, scan_data,
                                                                            learning_data, map_model_config, model,
                                                                            config) + \
-           config.random_point_loss_weight * mapping_classification_loss(map_model, position, scan_data,
+           config.random_point_loss_weight * random_mapping_point_loss(map_model, position, scan_data,
                                                                          learning_data, map_model_config, model, config)
 
 
@@ -165,7 +167,8 @@ class CNFMapBuilder:
         )
 
     def step(self, map_model: MapModel, position: jnp.array, scan_data: ScanData):
-        learning_data = LearningData.from_config(scan_data, self._map_building_config, self.state.iteration)
+        borders = self._get_borders(scan_data, position)
+        learning_data = LearningData.from_config(scan_data, self._map_building_config, self.state.iteration, borders)
         loss, grad = self.grad_function(map_model, position, scan_data, learning_data, self._map_model_config,
                                         self._mlp_model,
                                         self._map_building_config)
@@ -190,3 +193,10 @@ class CNFMapBuilder:
         for i in tqdm.tqdm(range(self._learning_config.iterations)):
             map_model = self.step(map_model, position, scan_data)
         return map_model
+
+    @staticmethod
+    def _get_borders(scan_data, position):
+        points = calculate_points(scan_data.depths, scan_data)
+        points = transform_points(points, position).reshape(-1, 2)
+        return RectangleBoundary(jnp.max(points[:, 0]), jnp.min(points[:, 0]), jnp.max(points[:, 1]),
+                                 jnp.min(points[:, 1]))

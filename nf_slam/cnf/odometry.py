@@ -1,4 +1,5 @@
 import dataclasses
+from typing import Union
 
 import jax.numpy as jnp
 import numpy as np
@@ -9,7 +10,7 @@ from nf_slam.laser_data import LaserData
 from nf_slam.position_2d import Position2D
 from nf_slam.space_hashing_mapping.map_model import init_map_model
 from nf_slam.space_hashing_mapping.mapping import ScanData
-from nf_slam.space_hashing_mapping.mlp_model import MLPModel
+from nf_slam.space_hashing_mapping.mlp_model import MLPModel, NormMLPModel
 
 
 @dataclasses.dataclass
@@ -43,7 +44,8 @@ class DataPointBatch(object):
 
 
 def get_random_data_point_batch(laser_data_list, scan_count, points_per_scan, positions):
-    laser_data_indices = np.random.choice(np.arange(len(laser_data_list)), scan_count)
+    laser_data_indices = np.random.choice(np.arange(len(laser_data_list)), scan_count - 1)
+    laser_data_indices = np.append(laser_data_indices, len(laser_data_list) - 1)
     depths = []
     angles = []
     x = []
@@ -72,7 +74,7 @@ def get_random_data_point_batch(laser_data_list, scan_count, points_per_scan, po
 class CNFOdometry:
     def __init__(self, parameters: CNFOdometryConfig, batch_map_builder: CNFMapBuilder,
                  position_optimizer: CNFPositionOptimizer, map_builder: CNFMapBuilder,
-                 mlp_model: MLPModel, map_model_config: CNFMapModelConfig):
+                 mlp_model: Union[MLPModel, NormMLPModel], map_model_config: CNFMapModelConfig):
         self._batch_map_builder = batch_map_builder
         self._map_builder = map_builder
         self._position_optimizer = position_optimizer
@@ -98,11 +100,12 @@ class CNFOdometry:
     def step(self, laser_data: LaserData):
         scan_data = ScanData.from_laser_data(laser_data)
         self._add_odometry(laser_data.odometry_position)
-        self._optimize_map(scan_data)
         self._optimize_position(scan_data)
+        self._optimize_map(scan_data)
         self.processed_laser_data_list.append(laser_data)
         self.reconstructed_odometry_positions.append(position2d_from_jax(self.tracked_position))
         self._batch_optimize_map()
+        self.iteration += 1
 
     def _add_odometry(self, wheel_odometry):
         current_position = position2d_from_jax(self.tracked_position)
@@ -128,3 +131,7 @@ class CNFOdometry:
                 self.processed_laser_data_list, self._parameters.mapping_batch_count, self._parameters.point_count,
                 self.reconstructed_odometry_positions)
             self.map_model = self._batch_map_builder.step(self.map_model, batch.position, batch.scan_data)
+
+    @property
+    def current_position(self):
+        return position2d_from_jax(self.tracked_position)

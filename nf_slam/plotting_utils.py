@@ -11,7 +11,7 @@ from nf_slam.space_hashing_mapping.mapping import ScanData, LearningData, predic
 from nf_slam.space_hashing_mapping.mlp_model import MLPModel
 
 
-def get_points(laser_data_list, c="yellow", s=0.3):
+def get_points(laser_data_list):
     all_points = []
     for laser_data in laser_data_list:
         all_points.append(laser_data.as_points_in_odometry_frame())
@@ -35,6 +35,24 @@ def show_points(laser_data_list, c="yellow", s=0.3):
     all_points = []
     for laser_data in laser_data_list:
         all_points.append(laser_data.as_points_in_odometry_frame())
+    points = np.concatenate(all_points, axis=0)
+    plt.scatter(points[:, 0], points[:, 1], s=s, c=c)
+    plt.gca().set_aspect("equal")
+    return points
+
+
+def get_points_in_reconstructed_positions(laser_data_list, positions):
+    all_points = []
+    for position, laser_data in zip(positions, laser_data_list):
+        all_points.append(position.apply(laser_data.as_points()))
+    points = np.concatenate(all_points, axis=0)
+    return points
+
+
+def show_points_in_reconstructed_positions(laser_data_list, positions, c="yellow", s=0.3):
+    all_points = []
+    for position, laser_data in zip(positions, laser_data_list):
+        all_points.append(position.apply(laser_data.as_points()))
     points = np.concatenate(all_points, axis=0)
     plt.scatter(points[:, 0], points[:, 1], s=s, c=c)
     plt.gca().set_aspect("equal")
